@@ -6,11 +6,11 @@ output: html_document
 ---
 
 ```{r load-packages, include=FALSE}
-chooseCRANmirror(graphics=FALSE, ind=1)
+#chooseCRANmirror(graphics=FALSE, ind=1)
 knitr::opts_chunk$set(echo = TRUE)
-pkgs <- c("tswge", "dplyr", "tseries", "orcutt", "tidyverse","corrplot", "GGally", "ggplot2","nnfor","neuralnet")
-install.packages(pkgs, repos = "http://cran.us.r-project.org")
-library('tswge')
+#pkgs <- c("tswge", "dplyr", "tseries", "orcutt", "tidyverse","corrplot", "GGally", "ggplot2","nnfor","neuralnet")
+#install.packages(pkgs, repos = "http://cran.us.r-project.org")
+library(tswge)
 library(dplyr)
 library(tseries)
 library(orcutt)
@@ -34,15 +34,15 @@ library(neuralnet)
 
 ```{r load-data, include=FALSE}
 ### loading the data
-APPL = read.csv("Rfolder/AAPL.csv", header = TRUE)
-DXY = read.csv("Rfolder/DX-Y.NYB.csv", header = TRUE)
-CAC40 = read.csv("Rfolder/CAC40.csv", header = TRUE)
-Gold = read.csv("Rfolder/GC=F.csv", header = TRUE)
-Copper = read.csv("Rfolder/HG=F.csv", header = TRUE)
-CQQQ = read.csv("Rfolder/CQQQ.csv", header = TRUE)
-TNYR = read.csv("Rfolder/TNX.csv", header = TRUE)
-WTI = read.csv("Rfolder/CL=F.csv", header = TRUE)
-NASDAQ = read.csv("Rfolder/IXIC.csv", header = TRUE)
+APPL = read.csv("AAPL.csv", header = TRUE)
+DXY = read.csv("DX-Y.NYB.csv", header = TRUE)
+CAC40 = read.csv("CAC40.csv", header = TRUE)
+Gold = read.csv("GC=F.csv", header = TRUE)
+Copper = read.csv("HG=F.csv", header = TRUE)
+CQQQ = read.csv("CQQQ.csv", header = TRUE)
+TNYR = read.csv("TNX.csv", header = TRUE)
+WTI = read.csv("CL=F.csv", header = TRUE)
+NASDAQ = read.csv("IXIC.csv", header = TRUE)
 
 ```
 
@@ -188,12 +188,13 @@ plot(decomp1.appl.add)
 
 ```{r first-difference Overfitting, Identifying model}
 ## taking the first difference; linear only, no quardatic
-Appl.stock.1 = artrans.wge(Appl.stock.Lst, phi.tr = 1) 
+#Appl.stock.1 = artrans.wge(Appl.stock.Lst, phi.tr = 1)
+Appl.stock.1 = artrans.wge(APPL$Adj.Close, phi.tr = 1) # inner join removed a significant amount of data from the series
 plotts.sample.wge(Appl.stock.1)
 acf(Appl.stock.1)
 
 ## Overfitting the model to see any other factor besides the differnece can influence the stationarity
-appl.est.overfit = est.ar.wge(Appl.stock.1, p=7, type = 'burg')
+#appl.est.overfit = est.ar.wge(Appl.stock.1, p=7, type = 'burg')
 ## (1-0.9994B) is the dominent factor, which indicates first differencing. No other factor with a root close to unit 
 
 ## running pacf to see whether we can stop AR or MA models
@@ -202,8 +203,8 @@ pacf(Appl.stock.1)
 
 ## Identifying the top five model using aic, bic and aaic
 aic5.wge(Appl.stock.1, type = 'aic')
-aic5.wge(Appl.stock.1, type = 'bic')
-aic5.wge(Appl.stock.1, type = 'aaic')
+#aic5.wge(Appl.stock.1, type = 'bic')
+#aic5.wge(Appl.stock.1, type = 'aaic')
 
 ## Top two models are ARIMA(4,1,2) and ARIMA(5,1,1)
 

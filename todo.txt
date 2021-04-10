@@ -1,0 +1,7 @@
+TODO: 
+Dhruba - Univariate Models and Neural Network
+  Plots and Writing
+
+Kevin - Multivariate Models
+  Plots and Writing
+

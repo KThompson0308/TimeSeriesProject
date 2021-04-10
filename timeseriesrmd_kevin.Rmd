@@ -1,0 +1,167 @@
+---
+title: "timeseriesapple"
+author: "Kevin Thompson"
+date: "4/9/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tswge)
+
+apple <- read.csv("kdata/AAPL.csv")
+irx <- read.csv("kdata/IRX.csv")
+fvx <- read.csv("kdata/FVX.csv")
+ixic <- read.csv("kdata/IXIC.csv")
+```
+
+
+```{r univariateSummary}
+summary(fvx)
+```
+
+
+```{r cleaning}
+ixic$Adj.Close <- as.numeric(ixic$Adj.Close)
+irx$Adj.Close <- as.numeric(irx$Adj.Close)
+fvx$Adj.Close <- as.numeric(fvx$Adj.Close)
+ixic2 <- drop_na(ixic, Adj.Close) %>% select(c(Date, Adj.Close))
+irx2 <- drop_na(irx, Adj.Close) %>% select(c(Date, Adj.Close))
+fvx2 <- drop_na(fvx, Adj.Close) %>% select(c(Date, Adj.Close))
+colnames(ixic2) <- c("Date", "IXIC")
+colnames(irx2) <- c("Date", "IRX")
+colnames(fvx2) <- c("Date", "FVX")
+final = right_join(apple, irx2, by="Date")
+final = right_join(final, fvx2, by="Date")
+final = left_join(final, ixic2, by="Date")
+final <- final %>% mutate(rel_yield = FVX/IRX)
+```
+
+```{r diff}
+d1aapl = artrans.wge(final$Adj.Close, phi.tr=1)
+d1fvx = artrans.wge(final$FVX, phi.tr=1)
+d1ixic = artrans.wge(final$IXIC, phi.tr=1)
+```
+
+```{r ccf}
+ccf(d1fvx, d1aapl)
+```
+
+```{r ccf2}
+ccf(d1ixic, d1aapl)
+```
+
+```{r base}
+mod1 <- lm(Adj.Close ~ IRX+FVX, data=final)
+#aic5.wge(mod1$residuals) yields ARIMA(2,1,0)
+arimamod1 <- arima(final$Adj.Close,order = c(2,1,0),xreg=final %>% select(c(IRX, FVX, IXIC)))
+```
+
+```{r basecheckllung}
+tswge::ljung.wge(arimamod1$residuals)
+```
+
+```{r basemodelsummary}
+broom::tidy(arimamod1)
+```
+
+So from what I can see here it seems that AAPL stock price varies more with 5 US treasury
+bond rate than with 13 day (makes sense), but I have not lagged that yet. As expected,
+the NASDAQ composite is also strongly associated with the apple stock price. 
+
+```{r baselagccf}
+d1fvxlag1 = d1fvx %>% lag(n=1)
+arima
+```
+
+```{r var}
+library(vars)
+X = final %>% select(c(IXIC,FVX,Adj.Close,IRX))
+VARselect(X, lag.max = 10, type="const")
+```
+
+```{r varfit}
+varfit = VAR(X, p=9, type="const")
+```
+
+```{r varsink}
+Y = read.csv("Appl.data.csv")
+Y = Y %>% select_if(is.numeric)
+VARselect(Y, lag.max=10, type="const")
+```
+
+```{r varsinkfit}
+varsinkfit = VAR(Y, p=4, type="const")
+
+```
+
+
+```{r windowedASEarima}
+arima_windowed_ASE = function(trainingSize, horizon, data) {
+        
+len = dim(data)[1]
+trainingSize = 70
+horizon = 12
+ASEHolder = numeric()
+
+for( i in 1:(len-(trainingSize + horizon) + 1))
+{
+  fit2 = arima(data[i:(i+(trainingSize-1)),3], order=c(2,1,0),xreg = data[i:(i+(trainingSize-1)),-3])
+  forecast = predict(fit2,data[(trainingSize+i):(trainingSize+i+(horizon-1)),-3],n.ahead=horizon)$pred
+  ASE = mean((data[(trainingSize+i):(trainingSize+ i + (horizon) - 1),3] - forecast)^2)
+  ASEHolder[i] = ASE
+}
+  WindowedASE = mean(ASEHolder)
+  return(WindowedASE)
+}
+
+arima_windowed_ASE(70,7,X)
+```
+
+```{r windowedASE}
+VAR_windowed_ASE = function(trainingSize, horizon, data, p) {
+        
+len = dim(data)[1]
+trainingSize = 70
+horizon = 12
+ASEHolder = numeric()
+
+for( i in 1:(len-(trainingSize + horizon) + 1))
+{
+  fit = VAR(data[i:(i+(trainingSize-1)),], p = p, type="const")
+  forecast = predict(fit, n.ahead=horizon)$fcst$Adj.Close[,1]
+  ASE = mean((data[(trainingSize+i):(trainingSize+ i + (horizon) - 1),3] - forecast)^2)
+         
+  ASEHolder[i] = ASE
+  
+}
+  WindowedASE = mean(ASEHolder)
+  return(WindowedASE)
+}
+
+VAR_windowed_ASE(70, 7, X, 9)
+```
+
+```{r ensemble}
+ensemble_windowed_ASE = function(trainingSize, horizon, data, p) {
+        
+len = dim(data)[1]
+trainingSize = 70
+horizon = 12
+ASEHolder = numeric()
+
+for( i in 1:(len-(trainingSize + horizon) + 1))
+{
+  fit1 = VAR(data[i:(i+(trainingSize-1)),], p = p, type="const")
+  fit2 = arima(data[i:(i+(trainingSize-1)),3], order=c(2,1,0),xreg = data[i:(i+(trainingSize-1)),-3])
+  forecast = (predict(fit1, n.ahead=horizon)$fcst$Adj.Close[,1] + predict(fit2,data[(trainingSize+i):(trainingSize+i+(horizon-1)),-3],n.ahead=horizon)$pred)/2
+  ASE = mean((data[(trainingSize+i):(trainingSize+ i + (horizon) - 1),3] - forecast)^2)
+  ASEHolder[i] = ASE
+}
+  WindowedASE = mean(ASEHolder)
+  return(WindowedASE)
+}
+
+ensemble_windowed_ASE(70,7,X,9)
+```
