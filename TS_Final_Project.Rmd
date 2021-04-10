@@ -1,0 +1,737 @@
+---
+title: "TimeSeries Final Project - Apple Stock Price Prediction"
+author: "Kevin and Dhruba"
+date: "4/10/2021"
+output: html_document
+---
+
+```{r load-packages, include=FALSE}
+chooseCRANmirror(graphics=FALSE, ind=1)
+knitr::opts_chunk$set(echo = TRUE)
+pkgs <- c("tswge", "dplyr", "tseries", "orcutt", "tidyverse","corrplot", "GGally", "ggplot2","nnfor","neuralnet")
+install.packages(pkgs, repos = "http://cran.us.r-project.org")
+library('tswge')
+library(dplyr)
+library(tseries)
+library(orcutt)
+library(tidyverse)
+library(corrplot)
+library(GGally)
+library(ggplot2)
+library(nnfor)
+library(neuralnet)
+```
+
+#Objective to predict the stock price of Apple. however, we would like to evaluate the Apple stock in conjunction with other financial and economic parameters. 
+# NASDAQ is the systematic technology benchmark that provides the reference as to how the apple stock price deviates from US technology benchmark
+# DXY is the US dollar index that measures the value of US dollar with respect to the basket of global currencies is very relevant for the apple stock as its products have the global presence and its revenue/profit depends on the currency fluctuation
+# Gold has traditionally been perceived as the value storage and is the counter to the inflation. Also, it indicates the state of economy in terms of its expansion or contraction. Apple products tend to sell well when the economy is in the expansion mode
+# Copper is famous known as Dr. Copper as it requires in electrical equipment, construction work, cable and many things that support the economic development. Therefore, the copper  price indicates the economy state. In addition, Apple products too need copper; so the price of the copper has direct bearing on Apple stock
+# TNYR is the 10 years US bond yield and it is also called a dirty rate as it encompasses many things such as inflation expectation, market condition, currency valuation and so forth. Importantly, it is used as the proxy for the risk free rate, which is used in turn to calculate the return on equity. 
+# CQQQ is the Invesco ETF, mimicking Chinese technology stocks. China is the big market for Apple products; therefore benchmarking Chinese technology provides another angle in evaluation Apple stock. 
+# CAC40 is the Paris based European stock index. The same notion for which we have included CQQQ is applicable here too. 
+# WTI has a high volatility and most cases the inflation (core + energy) is impacted by energy price as the core inflation does not fluctuate much. Therefore, the inclusion of WTI takes care of effect of energy price volatility 
+
+```{r load-data, include=FALSE}
+### loading the data
+APPL = read.csv("Rfolder/AAPL.csv", header = TRUE)
+DXY = read.csv("Rfolder/DX-Y.NYB.csv", header = TRUE)
+CAC40 = read.csv("Rfolder/CAC40.csv", header = TRUE)
+Gold = read.csv("Rfolder/GC=F.csv", header = TRUE)
+Copper = read.csv("Rfolder/HG=F.csv", header = TRUE)
+CQQQ = read.csv("Rfolder/CQQQ.csv", header = TRUE)
+TNYR = read.csv("Rfolder/TNX.csv", header = TRUE)
+WTI = read.csv("Rfolder/CL=F.csv", header = TRUE)
+NASDAQ = read.csv("Rfolder/IXIC.csv", header = TRUE)
+
+```
+
+# we have taken the adjusted close price of each parameter as it encapsulates the price volatility of a trading day. Also converted price to numerical price. 
+
+```{r Data cleaning, include=FALSE}
+### APPL - Date & Adj.Close
+head(APPL)
+APPL = APPL %>% dplyr::select(Date, Adj.Close)
+APPL$Date = as.Date(APPL$Date, "%m/%d/%Y")
+summary(APPL)
+### Dollar Index - Date & Adj.Close
+head(DXY)
+DXY = DXY %>% dplyr::select(Date, Adj.Close)
+DXY$Adj.Close = as.numeric(DXY$Adj.Close)
+DXY$Date = as.Date(DXY$Date, "%m/%d/%Y")
+summary(DXY)
+### FTSE (Financial Times Index at London) - Date & Adj.Close
+head(CAC40)
+CAC40 = CAC40 %>% dplyr::select(Date, Adj.Close)
+CAC40$Adj.Close = as.numeric(CAC40$Adj.Close)
+CAC40$Date = as.Date(CAC40$Date, "%m/%d/%Y")
+summary(CAC40)
+### Gold (commodity price) - Date & Adj.Close
+head(Gold)
+Gold = Gold %>% dplyr::select(Date, Adj.Close)
+Gold$Adj.Close = as.numeric(Gold$Adj.Close)
+Gold$Date = as.Date(Gold$Date, "%m/%d/%Y")
+summary(Gold)
+### Copper (commodity price) - Date & Adj.Close
+head(Copper)
+Copper = Copper %>% dplyr::select(Date, Adj.Close)
+Copper$Adj.Close = as.numeric(Copper$Adj.Close)
+Copper$Date = as.Date(Copper$Date, "%m/%d/%Y")
+summary(Copper)
+### CQQQ (Invesco China Technology ETF - Proxy of chinese tech stock)
+head(CQQQ)
+CQQQ = CQQQ %>% dplyr::select(Date, Adj.Close)
+CQQQ$Adj.Close = as.numeric(CQQQ$Adj.Close)
+CQQQ$Date = as.Date(CQQQ$Date, "%m/%d/%Y")
+summary(CQQQ)
+### 10 year Treasury note  
+head(TNYR)
+TNYR = TNYR %>% dplyr::select(Date, Adj.Close)
+TNYR$Adj.Close = as.numeric(TNYR$Adj.Close)
+TNYR$Date = as.Date(TNYR$Date, "%m/%d/%Y")
+summary(TNYR)
+### WTI Crude 
+head(WTI)
+WTI = WTI %>% dplyr::select(Date, Adj.Close)
+WTI$Adj.Close = as.numeric(WTI$Adj.Close)
+WTI$Date = as.Date(WTI$Date, "%m/%d/%Y")
+summary(WTI)
+### NASDAQ index
+head(NASDAQ)
+NASDAQ = NASDAQ %>% dplyr::select(Date, Adj.Close)
+NASDAQ$Adj.Close = as.numeric(NASDAQ$Adj.Close)
+NASDAQ$Date = as.Date(NASDAQ$Date, "%m/%d/%Y")
+summary(NASDAQ)
+
+```
+
+# Using Date as the index to join parameters to create a dataset. TNYR and DXY do not exactly follow US trading days as US treasuries and dollars are traded across the globe and their weekdays are a bit different from US. Similarly, Chinese and European stock do not follow the same trading days as US and their holidays are different from US. However, we have used US trading days for the data merging.
+
+```{r Creating data by merging parameters, include=FALSE}
+
+### Creating data set - joining Apple, Nasdaq, wti, gold, copper
+Appl.df = list(APPL,NASDAQ,WTI, Gold, Copper) %>% reduce(inner_join, by = 'Date')
+names(Appl.df)[2] = 'APPL'
+names(Appl.df)[3] = 'NASDAQ'
+names(Appl.df)[4] = 'WTI'
+names(Appl.df)[5] = 'Gold'
+names(Appl.df)[6] = 'Copper'
+summary(Appl.df)
+head(Appl.df)
+dim(Appl.df) #--- 1509, 6
+### Creating dataset - joining TNYR and DXY
+tnxy = inner_join(TNYR, DXY, by = 'Date')
+names(tnxy)[2] = 'TNYR'
+names(tnxy)[3] = 'DXY'
+summary(tnxy)
+dim(tnxy) # --- 1824, 3
+### Creating final dataset
+Appl.data = list(Appl.df, tnxy, CQQQ,CAC40) %>% reduce(inner_join, by = 'Date')
+names(Appl.data)[9] = 'CQQQ'
+names(Appl.data)[10] = 'CAC40'
+summary(Appl.data)
+dim(Appl.data) ## ---1494, 10
+
+```
+# There are a few NAs in WTI, Gold, Copper, TNYR and DXY becuase of the way their trading days are handle. We used the mean of the proceeding and the following day to impute the value of NAs
+
+```{r Handling NAs, include=FALSE}
+###--------------------Imputing NAs 
+## Logic: use the average of preceeding and following values of NAs
+Appl.data$WTI = 0.5*(na.locf(Appl.data$WTI,fromlast=TRUE) + na.locf(Appl.data$WTI))
+Appl.data$Gold = 0.5*(na.locf(Appl.data$Gold,fromlast=TRUE) + na.locf(Appl.data$Gold))
+Appl.data$Copper = 0.5*(na.locf(Appl.data$Copper,fromlast=TRUE) + na.locf(Appl.data$Copper))
+Appl.data$TNYR = 0.5*(na.locf(Appl.data$TNYR,fromlast=TRUE) + na.locf(Appl.data$TNYR))
+Appl.data$DXY = 0.5*(na.locf(Appl.data$DXY,fromlast=TRUE) + na.locf(Appl.data$DXY))
+summary(Appl.data)
+```
+# Correlation plots to understand how Apple stock is related to other prices. NASDAQ, Gold and CQQQ are highly correlated. Copper and TNYR are moderately correlated. And CAC40, DXY and WTI have a low correlation with Apple stock. 
+
+```{r}
+### Corelation plots
+# ggpair plot for correlation
+Appl.data.corl%>%
+  ggpairs(columns=c("APPL","NASDAQ","WTI","Gold", "Copper","TNYR","DXY","CQQQ","CAC40"), 
+          upper = list(continuous = "cor", combo = "box_no_facet", discrete = "count", na =
+                         "na"),
+          lower = list(continuous = "points", combo = "facethist", discrete = "facetbar", na =
+                         "na"),
+          diag = list(continuous = "densityDiag", discrete = "barDiag", na = "naDiag"))
+```
+
+# *********** UNIVARIATE MODEL - ONLY WITH APPLE STOCK PRICE **********
+# Checking the stationarity of the series and  running the decomposition to see the trend and the seasonality
+
+```{r Checking-Stationarity and decomposing, echo=FALSE}
+### Checking the data stationary or not --- for stock price only
+Appl.stock = Appl.data$APPL
+str(Appl.stock)
+summary(Appl.stock)
+plotts.sample.wge(Appl.stock)
+# doing the log transformation of the data
+Appl.stock.log = log(Appl.stock)
+plotts.sample.wge(Appl.stock.log)
+# final data 
+Appl.stock.Lst = Appl.stock 
+
+### Decomposing the series of Apple stock price
+Appl.stock.ts = ts(Appl.stock.Lst, freq = 5, start = c(2015,4))
+decomp1.appl.add = decompose (Appl.stock.ts, type = "multiplicative")
+plot(decomp1.appl.add)
+
+## No seasonality; only trend
+
+```
+# Taking the first difference to make the series stationary, and then verifying with overfitting model to see any other factor that may influence the stationarity. 
+# Checking ACF and PACF to identify the model
+# Identifying the top 5 models using aic, bic and aaic
+
+```{r first-difference Overfitting, Identifying model}
+## taking the first difference; linear only, no quardatic
+Appl.stock.1 = artrans.wge(Appl.stock.Lst, phi.tr = 1) 
+plotts.sample.wge(Appl.stock.1)
+acf(Appl.stock.1)
+
+## Overfitting the model to see any other factor besides the differnece can influence the stationarity
+appl.est.overfit = est.ar.wge(Appl.stock.1, p=7, type = 'burg')
+## (1-0.9994B) is the dominent factor, which indicates first differencing. No other factor with a root close to unit 
+
+## running pacf to see whether we can stop AR or MA models
+pacf(Appl.stock.1)
+## Combination of ACF and PACF plots do not give any clear clue in identifying the model
+
+## Identifying the top five model using aic, bic and aaic
+aic5.wge(Appl.stock.1, type = 'aic')
+aic5.wge(Appl.stock.1, type = 'bic')
+aic5.wge(Appl.stock.1, type = 'aaic')
+
+## Top two models are ARIMA(4,1,2) and ARIMA(5,1,1)
+
+```
+#-------------    ARIMA UNIVERIATE MODELS -----------------------------#
+# Estimating the model 1 (ARIMA(4,1,2)); finding ASE and Rolling ASE for short-term (7 days) and long-term (30 days) prediction; doing the short-term and long-term forecasts
+
+```{r Model1-ARIMA(4,1,2) echo=FALSE}
+###=================== Model 1 - ARIMA(4,1,2) =================###   
+Appl.stock.est1 = est.arma.wge(Appl.stock.1, p=4, q=2) # burg and mle are same
+Appl.stock.est1$phi
+factor.wge(phi = c(-0.56682499,0.42071169,0.04664215,-0.05776649))
+Appl.stock.est1$theta
+factor.wge(phi= c(-0.4614112, 0.4453061))
+Appl.stock.est1$avar # variance
+Appl.stock.est1$aic  # model AIC
+
+## Calculation ASE for last 7 days >>>> Short Term >>>>>
+
+Appl.fore.lastn.7 = fore.aruma.wge(Appl.stock, phi = Appl.stock.est1$phi, d=1, theta = Appl.stock.est1$theta, n.ahead = 7, limits = T, lastn = T)
+Appl.fore.lastn.7$f
+len = length(Appl.stock.Lst)
+ASE_forecast1 = mean((Appl.fore.lastn.7$f - Appl.stock[(len-6):len])^2)
+ASE_forecast1
+
+## Rolling window ASE for short term
+phis = Appl.stock.est1$phi
+thetas = Appl.stock.est1$theta
+trainingSize = 50
+horizon = 7
+ASEHolder.model1 = numeric()
+for( i in 1:(100-(trainingSize + horizon) + 1))
+{
+  forecasts = fore.aruma.wge(Appl.stock[i:(i+(trainingSize-1))],
+                             phi = phis, theta = thetas, d=1, n.ahead = horizon)
+  
+  ASE = mean((Appl.stock[(trainingSize+i):(trainingSize+ i + (horizon) - 1)]
+              - forecasts$f)^2)
+  
+  ASEHolder.model1[i] = ASE
+}
+
+ASEHolder.model1
+hist(ASEHolder.model1)
+WindowedASE.model1 = mean(ASEHolder.model1)
+summary(ASEHolder.model1)
+WindowedASE.model1
+
+## Calculation ASE for last 30 days >>>> Long Term >>>>> 
+Appl.fore.lastn.30 = fore.aruma.wge(Appl.stock, phi = Appl.stock.est1$phi, theta = Appl.stock.est1$theta, d=1, n.ahead = 30, limits = T, lastn = T)
+Appl.fore.lastn.30$f
+len = length(Appl.stock)
+ASE_forecast1.2 = mean((Appl.fore.lastn.30$f - Appl.stock[(len-29):len])^2)
+ASE_forecast1.2
+
+## Rolling window ASE for long term
+phis = Appl.stock.est1$phi
+thetas = Appl.stock.est1$theta
+trainingSize = 50
+horizon = 30
+ASEHolder.model1.2 = numeric()
+for( i in 1:(100-(trainingSize + horizon) + 1))
+{
+  forecasts = fore.aruma.wge(Appl.stock[i:(i+(trainingSize-1))],phi = phis,
+                             theta = thetas, d=1, n.ahead = horizon)
+  
+  ASE = mean((Appl.stock[(trainingSize+i):(trainingSize+ i + (horizon) - 1)]
+              - forecasts$f)^2)
+  
+  ASEHolder.model1.2[i] = ASE
+}
+
+ASEHolder.model1.2
+hist(ASEHolder.model1.2)
+WindowedASE.model1.2 = mean(ASEHolder.model1.2)
+summary(ASEHolder.model1.2)
+WindowedASE.model1.2
+
+#### >>>>>>>> Short terms 7 days forecase >>>>>>> #######
+Appl.fore.7days = fore.aruma.wge(Appl.stock, phi = Appl.stock.est1$phi, theta = Appl.stock.est1$theta,  d=1, n.ahead = 7,limits = T, lastn = F)
+Appl.fore.7days$f
+#plot next 7 days
+plot(seq(1,100,1), Appl.stock[1395:1494], type = "l",xlim = c(0,115), 
+     ylab = "Stock Price", main = "7 Days Forecast")
+lines(seq(101,107,1), Appl.fore.7days$f, type = "l", col = "red")
+
+####>>>>>>>> Short terms 30 days forecase >>>>>>> #######
+Appl.fore.30days = fore.aruma.wge(Appl.stock, phi = Appl.stock.est1$phi,
+                                  theta = Appl.stock.est1$theta,d=1,
+                                 n.ahead = 30, limits = T, lastn = F)
+Appl.fore.30days$f
+#plot next 30 days
+plot(seq(1,100,1), Appl.stock[1395:1494], type = "l",xlim = c(0,140), 
+     ylab = "Stock Price", main = "30 Days Forecast")
+lines(seq(101,130,1), Appl.fore.30days$f, type = "l", col = "red")
+
+```
+
+
+#-------------    ARIMA UNIVERIATE MODELS -----------------------------#
+# Estimating the model 2 (ARIMA(5,1,1)); finding ASE and Rolling ASE for short-term (7 days) and long-term (30 days) prediction; doing the short-term and long-term forecasts
+
+```{r Model2-ARIMA(5,1,1) echo=FALSE}
+
+Appl.stock.est1 = est.arma.wge(Appl.stock.1, p=5, q=1) # burg and mle are same
+Appl.stock.est1$phi
+factor.wge(phi = c(-0.850236709,-0.055524504,-0.006590103,-0.025647299, 0.068208938))
+Appl.stock.est1$theta
+factor.wge(phi= c(-0.7585476))
+Appl.stock.est1$avar # variance
+Appl.stock.est1$aic  # model AIC
+
+## Calculation ASE for last 7 days >>>> Short Term >>>>> 
+
+Appl.fore.lastn.7 = fore.aruma.wge(Appl.stock, phi = Appl.stock.est1$phi, d=1, theta = Appl.stock.est1$theta, n.ahead = 7, limits = T, lastn = T)
+Appl.fore.lastn.7$f
+len = length(Appl.stock.Lst)
+ASE_forecast1 = mean((Appl.fore.lastn.7$f - Appl.stock[(len-6):len])^2)
+ASE_forecast1
+
+## Rolling window ASE for short term prediction
+phis = Appl.stock.est1$phi
+thetas = Appl.stock.est1$theta
+trainingSize = 50
+horizon = 7
+ASEHolder.model1 = numeric()
+for( i in 1:(100-(trainingSize + horizon) + 1))
+{
+  forecasts = fore.aruma.wge(Appl.stock[i:(i+(trainingSize-1))],
+                             phi = phis, theta = thetas, d=1, n.ahead = horizon)
+  
+  ASE = mean((Appl.stock[(trainingSize+i):(trainingSize+ i + (horizon) - 1)]
+              - forecasts$f)^2)
+  
+  ASEHolder.model1[i] = ASE
+}
+
+ASEHolder.model1
+hist(ASEHolder.model1)
+WindowedASE.model1 = mean(ASEHolder.model1)
+summary(ASEHolder.model1)
+WindowedASE.model1
+
+## Calculation ASE for last 30 days >>>> Long Term >>>>> 
+Appl.fore.lastn.30 = fore.aruma.wge(Appl.stock, phi= Appl.stock.est1$phi, theta = Appl.stock.est1$theta, d=1,n.ahead = 30, limits = T, lastn = T)
+Appl.fore.lastn.30$f
+len = length(Appl.stock)
+ASE_forecast1.2 = mean((Appl.fore.lastn.30$f - Appl.stock[(len-29):len])^2)
+ASE_forecast1.2
+
+## Rolling window ASE for long term prediction
+phis = Appl.stock.est1$phi
+thetas = Appl.stock.est1$theta
+trainingSize = 50
+horizon = 30
+ASEHolder.model1.2 = numeric()
+for( i in 1:(100-(trainingSize + horizon) + 1))
+{
+  forecasts = fore.aruma.wge(Appl.stock[i:(i+(trainingSize-1))],phi = phis,
+                             theta = thetas, d=1, n.ahead = horizon)
+  
+  ASE = mean((Appl.stock[(trainingSize+i):(trainingSize+ i + (horizon) - 1)]
+              - forecasts$f)^2)
+  
+  ASEHolder.model1.2[i] = ASE
+}
+
+ASEHolder.model1.2
+hist(ASEHolder.model1.2)
+WindowedASE.model1.2 = mean(ASEHolder.model1.2)
+summary(ASEHolder.model1.2)
+WindowedASE.model1.2
+
+####  >>>>>>>> Short terms 7 days forecast >>>>>>>    #######
+Appl.fore.7days = fore.aruma.wge(Appl.stock, phi = Appl.stock.est1$phi,
+                                  theta = Appl.stock.est1$theta,  d=1, n.ahead = 7,
+                                   limits = T, lastn = F)
+Appl.fore.7days$f
+
+#plot next 7 days
+plot(seq(1,100,1), Appl.stock[1395:1494], type = "l",xlim = c(0,115), 
+     ylab = "Stock Price", main = "7 Days Forecast")
+lines(seq(101,107,1), Appl.fore.7days$f, type = "l", col = "red")
+
+#### >>>>>>>> Short terms 30 days forecase >>>>>>> #####
+Appl.fore.30days = fore.aruma.wge(Appl.stock, phi = Appl.stock.est1$phi,
+                                  theta = Appl.stock.est1$theta,d=1,
+                                 n.ahead = 30, limits = T, lastn = F)
+Appl.fore.30days$f
+
+#plot next 30 days
+plot(seq(1,100,1), Appl.stock[1395:1494], type = "l",xlim = c(0,140), 
+     ylab = "Stock Price", main = "30 Days Forecast")
+lines(seq(101,130,1), Appl.fore.30days$f, type = "l", col = "red")
+
+```
+#----------UNIVARIATE MODEL: Signal plus noise model------------#
+# Building the deterministic part of the model and then checking whether its residuals have been whitened. Creating the model on the residual and formulating the equation. Finally short and long forecasting 
+
+```{r Signal-plus-model, echo=FALSE}
+
+plotts.sample.wge(Appl.stock)
+# creating deterministic model
+n = length(Appl.stock) ## 1494
+t = c(1:n)
+plotts.sample.wge(t)
+det.appl.fit = lm(Appl.stock~t)
+summary(det.appl.fit)
+det.r = Appl.stock - det.appl.fit$coefficients[1] - det.appl.fit$coefficients[2]*t ## residuals
+
+est.det.r = aic.wge(det.r, p=0:6, q=0:0) ## p=2
+est.det.r
+det.y.trans = artrans.wge(Appl.stock,phi.tr = est.det.r$phi)
+det.t.trans = artrans.wge(t, phi.tr = est.det.r$phi)
+det.appl.tran.fit = lm(det.y.trans ~ det.t.trans)
+summary(det.appl.tran.fit)
+plotts.sample.wge(det.appl.tran.fit$residuals, arlimits = T)
+## checking the residuals are whitened 
+acf(det.appl.tran.fit$residuals) 
+## the model is mostly whitened besides a few spikes here and there
+# Ljung-box test
+ljung.wge(det.appl.tran.fit$residuals, K = 24) ## $pval: 3.895293e-08
+ljung.wge(det.appl.tran.fit$residuals, K = 48) ## $pval: 2.460254e-13
+## Rejected the test; so some white noise exists as evident in acf plot
+## model for Zt (residual)
+est.det.r$phi
+factor.wge(phi = est.det.r$phi)
+est.det.r$vara
+det.appl.fit$coefficients[1]
+det.appl.fit$coefficients[2]
+## Model Equation: Xt = 6.5851 + 0.0584*t + Zt ; Variance = 1.6785
+## (1-0.9976B)(1+0.1121B)Zt = at
+## Verifying the model with generated realization
+gen.sigplusnoise.wge(1494, b0 = 6.5851, b1 = 0.0584, phi = est.det.r$phi, vara = est.det.r$vara )
+plotts.sample.wge(Appl.stock)
+plot.ts(Appl.stock)
+
+## forecasting based on signal plus model
+## forecast for next 7 days
+det.appl.fcst.7 = fore.sigplusnoise.wge(Appl.stock, max.p = 2, n.ahead = 7, limits = F)
+det.appl.fcst.7$f
+#plot next 7 days
+plot(seq(1,100,1), Appl.stock[1395:1494], type = "l",xlim = c(0,115), 
+     ylab = "Stock Price", main = "7 Days Forecast")
+lines(seq(101,107,1), det.appl.fcst.7$f, type = "l", col = "red")
+
+## forecast for next 30 days
+det.appl.fcst.30 = fore.sigplusnoise.wge(Appl.stock, max.p = 2, n.ahead = 30, limits = F)
+det.appl.fcst.30$f
+#plot next 30 days
+plot(seq(1,100,1), Appl.stock[1395:1494], type = "l",xlim = c(0,140), 
+     ylab = "Stock Price", main = "30 Days Forecast")
+lines(seq(101,130,1), det.appl.fcst.30$f, type = "l", col = "red")
+
+```
+# -------- UNIVARIATE MODEL using Neural Net --------------------#
+
+```{r Univeriate-nn-model, echo=FALSE}
+
+Appl.data
+str(Appl.data) ## length: 1494
+APPL  = ts(Appl.data$APPL)
+## == >>>> Short term model 7 days- Checking ASE and Forecasting >>>>>
+appl.uni.trn.7 = ts(APPL[1:1488]) ## train data
+appl.uni.tst.7 = ts(APPL[1488:1494]) # test data
+
+appl.uni.fit.mlp = mlp(appl.uni.trn.7,reps = 50,comb = "mean")
+appl.uni.fit.mlp
+plot(appl.uni.fit.mlp)
+
+appl.uni.fore.mlp = forecast(appl.uni.fit.mlp, h = 7)
+plot(seq(1,100,1),APPL[1389:1488], type = 'l', xlim = c(1,115))
+lines(seq(101,107,1), appl.uni.fore.mlp$mean, col = 'blue')
+## ASE for 7 days
+ASE.appl.7 = mean((APPL[1488:1494] - appl.uni.fore.mlp$mean)^2)
+ASE.appl.7
+
+# 7days forecast
+fit.mlp.APPL = mlp(APPL,reps = 50,comb = "mean")
+fore.mlp.APPL = forecast(fit.mlp.APPL, h=7)
+tp.APPL=data.frame(fore.mlp.APPL)
+APPL.7 = tp.APPL$Point.Forecast
+
+plot(seq(1,100,1),APPL[1395:1494], type = 'l', xlim = c(1,115))
+lines(seq(101,107,1), APPL.7, col = 'blue')
+
+## == >>>> Long term model 30 days- Checking ASE and Forecasting >>>>>
+appl.uni.trn.30 = ts(APPL[1:1464]) ## train data
+appl.uni.tst.30 = ts(APPL[1465:1494]) # test data
+
+appl.uni.fit.mlp.2 = mlp(appl.uni.trn.30,reps = 50,comb = "mean")
+appl.uni.fit.mlp.2
+plot(appl.uni.fit.mlp.2)
+
+appl.uni.fore.mlp.2 = forecast(appl.uni.fit.mlp.2, h = 30)
+plot(seq(1,100,1),APPL[1365:1464], type = 'l', xlim = c(1,115))
+lines(seq(101,130,1), appl.uni.fore.mlp.2$mean, col = 'blue')
+## ASE for 30 days
+ASE.appl.30 = mean((APPL[1465:1494] - appl.uni.fore.mlp.2$mean)^2)
+ASE.appl.30
+# 30days forecast
+fore.mlp.APPL = forecast(fit.mlp.APPL, h=30)
+tp.APPL=data.frame(fore.mlp.APPL)
+APPL.30 = tp.APPL$Point.Forecast
+
+plot(seq(1,100,1),APPL[1395:1494], type = 'l', xlim = c(1,140))
+lines(seq(101,130,1), APPL.30, col = 'blue')
+
+```
+#--------------- MULTIVARIATE MODEL USING Neural Net -----------------#
+# we are using neuralnet API for the multivariate nn model building as we encountered issues while running this model with mlp. However, we used mlp for 7 days and 30 days forecasting for individual parameter. 
+
+```{r Multivariate-Model-Using-nn, echo=FALSE}
+
+head(Appl.data)
+Appl.data.nn = Appl.data[,-1] ## removing Date
+str(Appl.data.nn)
+
+## Min-Max normalization of the dataset 
+Appl.data.norm = Appl.data.nn
+for(i in 1:9){
+  Appl.data.norm[,i] = (Appl.data.nn[,i] - min(Appl.data.nn[,i]))/
+    (max(Appl.data.nn[,i]) -min(Appl.data.nn[,i])) 
+}
+
+####    7 days ASE  ----------------------
+train.Appl.data.7 = Appl.data.norm[1:1487,]
+test.Appl.data.7 = Appl.data.norm[1488:1494,]
+
+fit.net.7 = neuralnet::neuralnet(APPL ~ NASDAQ + WTI + 
+                        Gold + Copper + TNYR + DXY + CQQQ + CAC40, 
+                        data = train.Appl.data.7, hidden = c(5,3), 
+                        linear.output=FALSE)
+plot(fit.net.7)
+
+out.test.7 = compute(fit.net.7, test.Appl.data.7[,2:9]) # prediction
+## reverting the values by retrofiting the min-max normalization
+pred.7 = out.test.7$net.result*(max(Appl.data.nn[,1]) -min(Appl.data.nn[,1]))+ min(Appl.data.nn[,1])
+actual.7 = Appl.data.nn[1488:1494,1]
+ASE.nn.7 = sum((pred.7 -actual.7)^2)/nrow(test.Appl.data.7)
+ASE.nn.7
+plot(seq(1,107,1),Appl.data.nn$APPL[1388:1494], type = 'l', xlim= c(1,115))
+lines(seq(101,107,1), pred.7, col = 'blue')
+
+####    30 days ASE   ---------------------------
+train.Appl.data.30 = Appl.data.norm[1:1464,]
+test.Appl.data.30 = Appl.data.norm[1465:1494,]
+
+fit.net.30 = neuralnet::neuralnet(APPL ~ NASDAQ + WTI + Gold + Copper + TNYR + DXY + CQQQ + CAC40, data = train.Appl.data.7, hidden = c(5,3),  linear.output=FALSE)
+plot(fit.net.30)
+
+out.test.30 = compute(fit.net.30, test.Appl.data.30[,2:9])
+# reverting to normal forecasting values 
+pred.30 = out.test.30$net.result*(max(Appl.data.nn[,1]) -min(Appl.data.nn[,1]))+ min(Appl.data.nn[,1])
+actual.30 = Appl.data.nn[1465:1494,1]
+ASE.nn.30 = sum((pred.30 -actual.30)^2)/nrow(test.Appl.data.30)
+ASE.nn.30
+plot(seq(1,130,1),Appl.data.nn$APPL[1365:1494], type = 'l', xlim = c(1,115))
+lines(seq(101,130,1), pred.30, col = 'blue')
+
+###====================================================================
+### 7 days forecast of individual parameter using mlp (nueral net) ====
+# APPL - 7days forecast
+fit.mlp.APPL = mlp(APPL,reps = 50,comb = "mean")
+fore.mlp.APPL = forecast(fit.mlp.APPL, h=7)
+tp.APPL=data.frame(fore.mlp.APPL)
+APPL.7 = tp.APPL$Point.Forecast
+
+# NASDAQ - 7days forecast
+fit.mlp.NASDAQ= mlp(NASDAQ,reps = 50,comb = "mean")
+fore.mlp.NASDAQ = forecast(fit.mlp.NASDAQ, h=7)
+tp.NASDAQ=data.frame(fore.mlp.NASDAQ)
+NASDAQ.7 = tp.NASDAQ$Point.Forecast
+
+# WTI - 7days forecast
+fit.mlp.WTI= mlp(WTI,reps = 50,comb = "mean")
+fore.mlp.WTI = forecast(fit.mlp.WTI, h=7)
+tp.WTI =data.frame(fore.mlp.WTI)
+WTI.7 = tp.WTI$Point.Forecast
+
+# Gold - 7days forecast
+fit.mlp.Gold = mlp(Gold,reps = 50,comb = "mean")
+fore.mlp.Gold = forecast(fit.mlp.Gold, h=7)
+tp.Gold =data.frame(fore.mlp.Gold)
+Gold.7 = tp.Gold$Point.Forecast
+
+# Copper - 7days forecast
+fit.mlp.Copper = mlp(Copper,reps = 50,comb = "mean")
+fore.mlp.Copper = forecast(fit.mlp.Copper, h=7)
+tp.Copper =data.frame(fore.mlp.Copper)
+Copper.7 =  tp.Copper$Point.Forecast
+
+# TNYR - 7days forecast
+fit.mlp.TNYR = mlp(TNYR,reps = 50,comb = "mean")
+fore.mlp.TNYR = forecast(fit.mlp.TNYR, h=7)
+tp.TNYR =data.frame(fore.mlp.TNYR)
+TNYR.7 = tp.TNYR$Point.Forecast
+
+# DXY - 7days forecast
+fit.mlp.DXY = mlp(DXY,reps = 50,comb = "mean")
+fore.mlp.DXY = forecast(fit.mlp.DXY, h=7)
+tp.DXY =data.frame(fore.mlp.DXY)
+DXY.7 = tp.DXY$Point.Forecast
+
+# CQQQ - 7days forecast
+fit.mlp.CQQQ = mlp(CQQQ,reps = 50,comb = "mean")
+fore.mlp.CQQQ = forecast(fit.mlp.CQQQ, h=7)
+tp.CQQQ =data.frame(fore.mlp.CQQQ)
+CQQQ.7 = tp.CQQQ$Point.Forecast
+
+# CAC40 - 7days forecast
+fit.mlp.CAC40 = mlp(CAC40,reps = 50,comb = "mean")
+fore.mlp.CAC40 = forecast(fit.mlp.CAC40, h=7)
+tp.CAC40 =data.frame(fore.mlp.CAC40)
+CAC40.7 = tp.CAC40$Point.Forecast
+
+## Creating data frame with 7 days forecasted values
+str(Appl.data.nn)
+str(Appl.data.norm)
+
+Appl.dfx.7 = data.frame(cbind(APPL = APPL.7,
+                              NASDAQ = NASDAQ.7, WTI = WTI.7,
+                              Gold = Gold.7,Copper = Copper.7,
+                              TNYR = TNYR.7, DXY = DXY.7, 
+                              CQQQ = CQQQ.7, CAC40 = CAC40.7))
+
+Appl.dfx.new.7 = rbind(Appl.data.nn, Appl.dfx.7)
+
+## Min-Max normalization 
+Appl.dfx.norm.7 = Appl.dfx.new.7
+for(i in 1:9){
+  Appl.dfx.norm.7[,i] = (Appl.dfx.new.7[,i] - min(Appl.dfx.new.7[,i]))/
+    (max(Appl.dfx.new.7[,i]) -min(Appl.dfx.new.7[,i])) 
+}
+
+str(Appl.dfx.norm.7)
+
+train.appl.7days.fore = Appl.dfx.norm.7[1:1494,]
+test.appl.7days.fore = Appl.dfx.norm.7[1495:1501,]
+
+fit.net.fore.7 = neuralnet::neuralnet(APPL ~ NASDAQ+WTI+Gold+Copper    +TNYR+DXY+CQQQ+CAC40,data = train.appl.7days.fore, hidden = c(5,3), linear.output=FALSE)
+plot(fit.net.fore.7)
+
+out.fore.7 = compute(fit.net.fore.7, test.appl.7days.fore[,2:9])
+
+forecast.7 = out.fore.7$net.result*(max(Appl.dfx.new.7[,1]) - min(Appl.dfx.new.7[,1]))+ min(Appl.dfx.new.7[,1])
+plot(seq(1,100,1),Appl.dfx.new.7$APPL[1395:1494], type = 'l', xlim = c(1,115))
+lines(seq(101,107,1), forecast.7, col = 'blue')
+
+###===================================================================
+### 30 days forecast for individual parameter using mlp ==============
+# APPL - 30days forecast
+fore.mlp.APPL = forecast(fit.mlp.APPL, h=30)
+tp.APPL=data.frame(fore.mlp.APPL)
+APPL.30 = tp.APPL$Point.Forecast
+
+# NASDAQ - 30days forecast
+fore.mlp.NASDAQ = forecast(fit.mlp.NASDAQ, h=30)
+tp.NASDAQ=data.frame(fore.mlp.NASDAQ)
+NASDAQ.30 = tp.NASDAQ$Point.Forecast
+
+# WTI - 30days forecast
+fore.mlp.WTI = forecast(fit.mlp.WTI, h=30)
+tp.WTI =data.frame(fore.mlp.WTI)
+WTI.30 = tp.WTI$Point.Forecast
+
+# Gold - 30days forecast
+fore.mlp.Gold = forecast(fit.mlp.Gold, h=30)
+tp.Gold =data.frame(fore.mlp.Gold)
+Gold.30 = tp.Gold$Point.Forecast
+
+# Copper - 30days forecast
+fore.mlp.Copper = forecast(fit.mlp.Copper, h=30)
+tp.Copper =data.frame(fore.mlp.Copper)
+Copper.30 =  tp.Copper$Point.Forecast
+
+# TNYR - 30days forecast
+fore.mlp.TNYR = forecast(fit.mlp.TNYR, h=30)
+tp.TNYR =data.frame(fore.mlp.TNYR)
+TNYR.30 = tp.TNYR$Point.Forecast
+
+# DXY - 30days forecast
+fore.mlp.DXY = forecast(fit.mlp.DXY, h=30)
+tp.DXY =data.frame(fore.mlp.DXY)
+DXY.30 = tp.DXY$Point.Forecast
+
+# CQQQ - 30days forecast
+fore.mlp.CQQQ = forecast(fit.mlp.CQQQ, h=30)
+tp.CQQQ =data.frame(fore.mlp.CQQQ)
+CQQQ.30 = tp.CQQQ$Point.Forecast
+
+# CAC40 - 30days forecast
+fore.mlp.CAC40 = forecast(fit.mlp.CAC40, h=30)
+tp.CAC40 =data.frame(fore.mlp.CAC40)
+CAC40.30 = tp.CAC40$Point.Forecast
+
+
+## Creating data frame with 30 days forecasted values
+str(Appl.data.nn)
+
+Appl.dfx.30 = data.frame(cbind(APPL = APPL.30,
+                              NASDAQ = NASDAQ.30, WTI = WTI.30,
+                              Gold = Gold.30,Copper = Copper.30,
+                              TNYR = TNYR.30, DXY = DXY.30, 
+                              CQQQ = CQQQ.30, CAC40 = CAC40.30))
+
+Appl.dfx.new.30 = rbind(Appl.data.nn, Appl.dfx.30)
+
+## Min-Max normalization
+Appl.dfx.norm.30 = Appl.dfx.new.30
+for(i in 1:9){
+  Appl.dfx.norm.30[,i] = (Appl.dfx.new.30[,i] - min(Appl.dfx.new.30[,i]))/
+    (max(Appl.dfx.new.30[,i]) -min(Appl.dfx.new.30[,i])) 
+}
+
+str(Appl.dfx.norm.30)
+
+train.appl.30days.fore = Appl.dfx.norm.30[1:1494,]
+test.appl.30days.fore = Appl.dfx.norm.30[1495:1524,]
+
+fit.net.fore.30 = neuralnet::neuralnet(APPL ~ NASDAQ+WTI+Gold+Copper+TNYR+DXY+CQQQ+CAC40, data = train.appl.30days.fore, hidden = c(5,3),linear.output=FALSE)
+
+plot(fit.net.fore.30)
+
+out.fore.30 = compute(fit.net.fore.30, test.appl.30days.fore[,2:9])
+## reverting the normal values
+forecast.30 = out.fore.30$net.result*(max(Appl.dfx.new.30[,1]) - min(Appl.dfx.new.30[,1]))+ min(Appl.dfx.new.30[,1])
+plot(seq(1,100,1),Appl.dfx.new.30$APPL[1395:1494], type = 'l', xlim = c(1,140))
+lines(seq(101,130,1), forecast.30, col = 'blue')
+
+```
